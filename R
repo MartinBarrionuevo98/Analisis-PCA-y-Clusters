@@ -1,0 +1,392 @@
+## Cargamos las librerias que utilizaremos durante el analisis
+library(tidyverse)
+library(countrycode)
+library(vdemdata)
+library(psych)
+library(corrplot)
+library(factoextra)
+library(rgl)
+library(fpc)
+library(gt)
+library(ggcorrplot)
+
+
+
+## Seleccionamos los paises  
+paises <- c("Argentina", "Bolivia", "Brazil", "Chile", "Colombia",
+                   "Ecuador", "Paraguay", "Peru", "Uruguay", "Venezuela")
+
+## Creamos el vector con las columnas de los datos
+sud_data <- vdem %>%
+  filter(country_name %in% paises, year >= 1900) %>%
+  select(country_name, year, v2x_egaldem)
+
+##Graficamos la evolucion del indice de democracia igualitaria
+ggplot(sud_data, aes(x = year, y = v2x_egaldem)) +
+  geom_line(color = "black", size = 0.5) +
+  facet_wrap(~ country_name, scales = "free_y") +
+  scale_x_continuous(limits = c(1900, 2023), breaks = seq(1900, 2020, by = 40)) +
+  labs(
+    title = "Evolución Egalitarian Democracy index",
+    x = "Año", y = "Índice"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 8),
+        axis.title.x = element_text(size = 8),  # tamaño del texto "Año"
+axis.title.y = element_text(size = 8))
+
+promedios_egaldem <- sud_data %>%
+  group_by(country_name) %>%
+  summarise(promedio_egaldem = mean(v2x_egaldem, na.rm = TRUE)) %>%
+  arrange(desc(promedio_egaldem))
+
+print(promedios_egaldem)
+
+## Tabla con el nombre y descripcion de las variables de analisis
+
+tabla_variables <- tibble::tibble(
+  Variable = c(
+    "e_peedgini",
+    "v2pepwrses",
+    "v2dlencmps",
+    "v2clsocgrp",
+    "v2x_corr",
+    "v2x_freexp_altinf",
+    "v2xcl_rol",
+    "v2x_cspart",
+    "v2x_civlib",
+    "v2xpe_exlecon",
+    "v2xcl_acjst",
+    "v2xpe_exlgender",
+    "v2xpe_exlgeo"
+  ),
+  Descripción = c(
+    "Educational inequality, Gini",
+    "Power distributed by socioeconomic position",
+    "Particularistic or Public good",
+    "Social group equality in respect for civil liberties",
+    "Political corruption",
+    "Freedom of Expression and Alternative Sources of Information",
+    "Equality before the law and individual liberty",
+    "Civil society participation",
+    "Civil liberties",
+    "Exclusion by Socio-Economic Group",
+    "Access to justice",
+    "Exclusion by Gender",
+    "Exclusion by Urban-Rural Location"
+  )
+)
+
+tabla_variables %>%
+  gt() %>%
+  tab_header(
+    title = "Dataset V-Dem v15"
+  )
+
+
+## Analisis exploratorio
+
+variables <- c("e_peedgini",
+               "v2pepwrses",
+               "v2dlencmps",
+               "v2clsocgrp",
+               "v2x_corr",
+               "v2x_freexp_altinf",
+               "v2xcl_rol",
+               "v2x_cspart",
+               "v2x_civlib",
+               "v2xpe_exlecon",
+               "v2xcl_acjst",
+               "v2xpe_exlgender",
+               "v2xpe_exlgeo")
+
+datos_filtrados <- vdem %>%
+  filter(country_name %in% paises, year >= 1900) %>%
+  select(all_of(variables))
+
+## Visualizamos estadisticas descriptivas
+
+tabla_descriptiva <- datos_filtrados %>%
+  select(all_of(variables)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor") %>%
+  group_by(Variable) %>%
+  summarise(
+    Promedio = mean(Valor, na.rm = TRUE),
+    Desvío = sd(Valor, na.rm = TRUE),
+    p0 = quantile(Valor, 0, na.rm = TRUE),
+    p25 = quantile(Valor, 0.25, na.rm = TRUE),
+    Mediana = quantile(Valor, 0.5, na.rm = TRUE),
+    p75 = quantile(Valor, 0.75, na.rm = TRUE),
+    p100 = quantile(Valor, 1, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+tabla_descriptiva %>%
+  gt() %>%
+  tab_header(title = "Distribución de las variables") %>%
+  fmt_number(columns = c(Promedio, Desvío, p0, p25, Mediana, p75, p100), decimals = 2)
+
+## Vemos las distribuciones de las variables
+
+sud_long <- datos_filtrados%>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor")
+
+ggplot(sud_long, aes(x = Valor, fill = Variable)) +
+  geom_density(alpha = 0.6, color = NA) +
+  facet_wrap(~ Variable, scales = "free", ncol = 3) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 8),
+    legend.position = "none"
+  ) +
+  labs(
+    title = "Distribución de las variables del V-Dem",
+    x = "Valor", y = "Densidad"
+  )
+
+## Regresiones
+
+regresion_data <- vdem %>%
+  filter(country_name %in% paises, year >= 1900) %>%
+  select(v2x_egaldem, all_of(variables)) %>%
+  drop_na()
+
+modelo <- lm(v2x_egaldem ~ ., data = regresion_data)
+summary(modelo)
+
+matriz_cor <- cor(regresion_data, use = "complete.obs")
+
+## Formato largo para graficar dispersion
+
+regresion_long <- regresion_data %>%
+  pivot_longer(cols = -v2x_egaldem, names_to = "Variable", values_to = "Valor")
+
+ggplot(regresion_long, aes(x = Valor, y = v2x_egaldem)) +
+  geom_point(alpha = 0.5, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue", linewidth = 0.7) +
+  facet_wrap(~ Variable, scales = "free_x", ncol = 3) +
+  labs(
+    title = "Relación entre las variables independientes y la igualdad democrática",
+    x = "Variable independiente",
+    y = "v2x_egaldem"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 8))
+
+## Estandarizamos los datos
+
+df (datos)
+
+## Analisis PCA
+
+pca <- prcomp(df)
+summary(pca)
+
+## Variabilidad explicada por cada componente
+
+sd_pc <- pca$sdev[1:10]
+var_explained <- sd_pc^2
+pct_var <- var_explained / sum(pca$sdev^2)
+pct_var_acum <- cumsum(pct_var)
+tabla_varianza <- data.frame(
+  Componente = paste0("PC", 1:10),
+  SD = round(sd_pc, 2),
+  `% Varianza` = round(pct_var, 2),
+  `% Varianza acumulada` = round(pct_var_acum, 2)
+)
+
+print(tabla_varianza)
+
+
+## Limitamos el grafico a las observaciones mas altas
+
+ind_cos2 <- get_pca_ind(pca)$cos2
+cos2_total <- rowSums(ind_cos2)
+
+top_n <- 50
+top_indices <- order(cos2_total, decreasing = TRUE)[1:top_n]
+
+# Convertir los índices a nombres de las filas
+top_names <- rownames(df)[top_indices]
+
+fviz_pca_ind(pca,
+             select.ind = list(name = top_names),
+             col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE
+)
+
+## Grafico para ver los componentes principales
+
+fviz_eig(pca)
+fviz_eig(pca, choice = "eigenvalue")
+
+plot3d(pca$scores[,c(1:3)])
+paran::paran(df, graph=FALSE, status=FALSE, all=FALSE)
+
+## Biplot para ver donde estan las variables con respecto al PCA
+
+fviz_pca_var(pca,
+             col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE
+)
+
+
+k1 <- kmeansruns(dataset, k=2, runs = 100)
+fviz_cluster(k1, data = dataset)
+fviz_cluster(k1, data = dataset, geom = "point")
+plot3d(pca$scores[,c(1:2)], col = k1$cluster)
+
+
+## Puntos indivuales del PCA Componente Principal 1 y 2
+p1 <- prcomp(df)
+fviz_pca_ind(p1, geom = "point")
+
+install.packages("hopkins")
+library(hopkins)
+
+hopkins_stat <- hopkins::hopkins(df)
+print(hopkins_stat)
+
+##Analisis de clustering/conglomerados
+
+library(factoextra)
+library(NbClust)
+library(fpc)
+library(cluster)
+
+## Existe algun patron en la democracia igualitaria?
+## Podemos identificar diferentes tipos de democracia igualitaria dependiendo de los paises?
+## Hay variables que influyen de manera decisiva en la democracia igualitaria?
+
+
+## De esta forma armamos un dataframe que contenga las VI por cada pais para el año mas reciente
+
+data("vdem")
+
+df2024 <- vdem %>%
+  filter(year == 2024, country_name %in% paises)
+
+vars_all <- c(variables)
+
+dataset <- df2024 %>%
+  select(country_name, year, all_of(vars_all))
+
+## Buscamos datos del 2023 en algunas variables que no tenian datos del 2024
+
+v2xpe_exlgeo <- vdem %>%
+  filter(country_name %in% paises, year == 2023) %>%
+  select(country_name, v2xpe_exlgeo)
+
+dataset <- dataset %>%
+  left_join(v2xpe_exlgeo, by = "country_name")
+
+## Dejamos el dataframe solo con datos numericos 
+
+dataset <- dataset %>% select(-year)
+
+rownames(dataset) <- dataset$country_name
+dataset$country_name <- NULL
+
+## Estandarizamos los datos y empezamos el analisis de PCA y Clusters
+
+df <- scale(dataset)
+head(df)
+
+p1 <- prcomp(df)
+fviz_pca_ind(p1)
+
+plot3d(p1$x[,1:3], col = k2$cluster, size = 5)
+
+k1 <- kmeansruns(df, krange = 3, runs = 100)
+fviz_cluster(k1, data = df)
+k1
+
+## K1 Ubica a los paises en cluster 2 o 1
+## Muestra los centroides de cada variable segun el componente principal (1 y 2)
+## En within cluster sum of squares by cluster indica el porcentaje que explica la separacion entre
+## cluster 1 y 2 del total de la estructura de los datos (en este caso, 52,5%)
+
+k2 <-kmeansruns(df, krange = 2, runs = 100)
+fviz_cluster(k2, data = df)
+
+
+## A medida de sumamos mas cluster, la division entre cada uno explica mayor parte de la 
+## estructura de los datos
+
+##Hay metodos para saber cuales son los numeros de cluster optimos:
+
+## Metodo del codo
+
+fviz_nbclust(df, kmeans, method = "wss", k.max = 9) +
+  labs(subtitle = "Elbow method") + geom_vline(xintercept = 4)
+
+## Metodo de la silueta
+fviz_nbclust(df, 
+             kmeans, 
+             method = "silhouette",
+             k.max = 9) +
+  labs(subtitle = "Silhouette method")
+
+
+## Metodo gap statistic
+
+set.seed(123) 
+
+gap_result <- fviz_nbclust(df, 
+                           kmeans, 
+                           method = "gap_stat", 
+                           k.max = 9, 
+                           nboot = 100,     # Número de simulaciones (ajústalo según el tiempo que tengas)
+                           verbose = TRUE)
+
+print(gap_result)
+
+
+## Metodo completo
+
+library(NbClust)
+
+res.nbclust <- NbClust(df, distance = "euclidean", min.nc = 2, max.nc = 9, method = "complete", index = "all")
+factoextra::fviz_nbclust(rest.nbclust) + theme_minimal()+ggtitle("NbClust's optimal number of clusters") + theme_classic()
+
+## Clusterboot, sirve para evaluar la estabilidad de los clusters obtenidos en un análisis
+## de clustering
+
+cf1 <- clusterboot(df, B=100, bootmethod = c("jitter", "boot"),
+                   clustermethod = kmeansCBI, krange=4, seed=123)
+
+print(cf1)
+
+## Con ggplot graficamos las diferencias entre los clusters con respecto a las variables
+## Por lo general, si buscamos una descripcion general de los datos nos quedamos con 2 clusters, pero
+## si queremos ver en detalle los clusters, hacemos 3 o 4
+
+dataset %>% 
+  ggplot(aes(x=factor(k2$cluster), y=v2xpe_exlgeo, fill=factor(k2$cluster))) +
+  geom_boxplot() + geom_point()
+
+
+## Matriz de distancia para ver que tan diferentes entre si son los casos 
+## Entre + alto, + diferencia
+
+d <- dist(df, method = "euclidean")
+d
+
+
+## Clustering jerarquico con metodo de ward
+
+hc2 <- hclust(d, method = "ward.D2")
+hc2
+
+## Con liga completa
+
+hc1 <- hclust(d, method = "complete")
+hc1
+
+## Dendograma
+
+plot(hc1, cex=0.6, hang = -1)
+plot(hc2, cex=0.6, hang = -1)
+
